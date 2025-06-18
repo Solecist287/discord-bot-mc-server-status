@@ -2,59 +2,73 @@ const fs = require('node:fs');
 const path = require('node:path');
 // Require the necessary discord.js classes
 const { Client, Collection, Events, GatewayIntentBits } = require('discord.js');
-const { token } = require('./config.json');
+const { token, guildId, channelId } = require('./config.json');
+
+const https = require('https');
 
 // Create a new client instance
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+function postIpOnDiscord(ip) {
+	const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-client.commands = new Collection();
-const foldersPath = path.join(__dirname, 'commands');
-const commandFolders = fs.readdirSync(foldersPath);
+	// When the client is ready, run this code (only once).
+	// The distinction between `client: Client<boolean>` and `readyClient: Client<true>` is important for TypeScript developers.
+	// It makes some properties non-nullable.
+	client.once(Events.ClientReady, readyClient => {
+		console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+	});
 
-for (const folder of commandFolders) {
-	const commandsPath = path.join(foldersPath, folder);
-	const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-	for (const file of commandFiles) {
-		const filePath = path.join(commandsPath, file);
-		const command = require(filePath);
-		// Set a new item in the Collection with the key as the command name and the value as the exported module
-		if ('data' in command && 'execute' in command) {
-			client.commands.set(command.data.name, command);
+	// Log in to Discord with your client's token
+	client.login(token);
+
+	client.on('ready', () => {
+		console.log("I am ready");
+		var guild = client.guilds.cache.get(guildId);
+		
+		if(guild && guild.channels.cache.get(channelId)){
+			const serverMessage = `Cockadoodle doo! Word around the farm is that the server IP has changed! \n\nNew IP: ${ip}\nPort: 25565\n\nSee you there!`;
+			console.log(serverMessage);
+			guild.channels.cache.get(channelId).send(serverMessage).then(() => client.destroy());
 		} else {
-			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+			console.log("error");
+			//if the bot doesn't have guild with the id guildid
+			// or if the guild doesn't have the channel with id channelid
 		}
-	}
+		client.destroy();
+	});
 }
-
-// When the client is ready, run this code (only once).
-// The distinction between `client: Client<boolean>` and `readyClient: Client<true>` is important for TypeScript developers.
-// It makes some properties non-nullable.
-client.once(Events.ClientReady, readyClient => {
-	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-});
-
-// Log in to Discord with your client's token
-client.login(token);
-
-// handler for client to interact
-client.on(Events.InteractionCreate, async interaction => {
-	if (!interaction.isChatInputCommand()) return;
-	
-    const command = interaction.client.commands.get(interaction.commandName);
-
-	if (!command) {
-		console.error(`No command matching ${interaction.commandName} was found.`);
-		return;
+function getIpAddress() {
+	return new Promise((resolve, reject) => {
+		https.get('https://api.ipify.org', (resp) => {
+			let data = '';
+			resp.on('data', (chunk) => {
+				data += chunk;
+			});
+			resp.on('end', () => {
+				resolve(data);
+			});
+		}).on('error', (err) => {
+			reject(`Error: ${err.message}`);
+		});
+	});
+}
+getIpAddress().then(ip => {
+	// open file to see last saved ip
+	const filePath = path.join(__dirname, 'saved-ip.txt');
+	let savedIp = null;
+	if (fs.existsSync(filePath)) {
+		savedIp = fs.readFileSync(filePath, 'utf8').trim();
 	}
-
-	try {
-		await command.execute(interaction);
-	} catch (error) {
-		console.error(error);
-		if (interaction.replied || interaction.deferred) {
-			await interaction.followUp({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
-		} else {
-			await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
-		}
+	// if ip is the same, exit
+	if (ip === savedIp) {
+		console.log("IP is the same, exiting");
+		process.exit(0);
+	} else {
+		// save new ip to file
+		fs.writeFileSync(filePath, ip, 'utf8');
 	}
+	// create discord client, post new ip, destroy itself
+	postIpOnDiscord(ip);
+}
+).catch(err => {
+	console.log(err);
 });
